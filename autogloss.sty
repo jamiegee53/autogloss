@@ -217,7 +217,7 @@
   \par
   \ifcsname autogloss@desc@#1\endcsname
     % term on its own line, description indented underneath
-    \noindent\autogloss@term{#1}\par\nobreak
+    {\parfillskip=0pt plus 1fil\relax\noindent\autogloss@term{#1}\par}\nobreak
     \parskip=0pt\relax
     \autogloss@hang=0pt \autogloss@ind=\autoglossdescindent\relax
   \else
