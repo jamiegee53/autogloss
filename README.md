@@ -16,7 +16,10 @@ large-R jet ..................................... 3
 ```
 
 ---
+## AI Disclosure
+Entering the final months of my thesis, learning Lua just to make a plugin is not a responsible use of my time. As such, this package is a complete vibe-code. That being said, if you're reading this at all because you *are* writing a thesis in science, then you understand that there is more nuance to AI than all or nothing, and there are appropriate use cases for this technology. This is one of them.
 
+---
 ## Requirements
 
 - **LuaLaTeX** (Overleaf: *Menu → Settings → Compiler → LuaLaTeX*).
