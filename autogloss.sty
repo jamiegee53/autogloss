@@ -1,0 +1,312 @@
+% autogloss.sty -- automatic page-referenced glossary for LuaLaTeX
+%
+%   \usepackage{autogloss}
+%   \autoglossterms{jet, large-$R$ jet, GNN, four-top}
+%   \autoglossterm[desc={Graph neural network}, alias={graph neural network}]{GNN}
+%   ...
+%   \printautoglossary
+%
+% Requires LuaLaTeX. Needs two compiles (Overleaf/latexmk does this for you).
+\NeedsTeXFormat{LaTeX2e}[2020/10/01]
+\ProvidesPackage{autogloss}[2026/11/18 v1.0 Automatic page-referenced glossary]
+
+\RequirePackage{iftex}
+\ifluatex\else
+  \PackageError{autogloss}{autogloss needs LuaLaTeX}
+    {In Overleaf: Menu > Settings > Compiler > LuaLaTeX.}
+  \expandafter\endinput
+\fi
+
+\directlua{require("autogloss")}
+\newattribute\autogloss@scanattr
+\directlua{autogloss.set_attr(luatexbase.attributes["autogloss@scanattr"])}
+
+\ExplSyntaxOn
+\bool_new:N \l__autogloss_autostart_bool
+\bool_set_true:N \l__autogloss_autostart_bool
+\tl_new:N \l__autogloss_title_tl
+\tl_set:Nn \l__autogloss_title_tl { Glossary }
+\bool_new:N \l__autogloss_toc_bool
+\bool_set_true:N \l__autogloss_toc_bool
+\bool_new:N \l__autogloss_links_bool
+\bool_set_true:N \l__autogloss_links_bool
+\def\autogloss@maxpw{}
+
+\keys_define:nn { autogloss }
+  {
+    casesensitive .code:n = \directlua{autogloss.case = true},
+    casesensitive .value_forbidden:n = true,
+    noplurals .code:n = \directlua{autogloss.plurals = false},
+    noplurals .value_forbidden:n = true,
+    noranges .code:n = \directlua{autogloss.ranges = false},
+    noranges .value_forbidden:n = true,
+    inputorder .code:n = \directlua{autogloss.sort = "input"},
+    inputorder .value_forbidden:n = true,
+    manualstart .code:n = \bool_set_false:N \l__autogloss_autostart_bool,
+    manualstart .value_forbidden:n = true,
+    title .tl_set:N = \l__autogloss_title_tl,
+    notoc .code:n = \bool_set_false:N \l__autogloss_toc_bool,
+    notoc .value_forbidden:n = true,
+    nolinks .code:n = \bool_set_false:N \l__autogloss_links_bool,
+    nolinks .value_forbidden:n = true,
+    maxpagewidth .code:n = \def\autogloss@maxpw{#1},
+  }
+\ProcessKeyOptions [ autogloss ]
+
+% ---- per-term keys --------------------------------------------------------
+\tl_new:N \l__autogloss_desc_tl
+\tl_new:N \l__autogloss_display_tl
+\clist_new:N \l__autogloss_alias_clist
+\bool_new:N \l__autogloss_hasdisplay_bool
+\keys_define:nn { autogloss / term }
+  {
+    desc    .tl_set:N = \l__autogloss_desc_tl,
+    display .code:n   = \tl_set:Nn \l__autogloss_display_tl {#1}
+                        \bool_set_true:N \l__autogloss_hasdisplay_bool,
+    alias   .clist_set:N = \l__autogloss_alias_clist,
+  }
+
+\int_new:N \l__autogloss_id_int
+\tl_new:N \l__autogloss_alias_tl
+
+\NewDocumentCommand \autoglossterm { O{} m }
+  {
+    \group_begin:
+    \tl_clear:N \l__autogloss_desc_tl
+    \clist_clear:N \l__autogloss_alias_clist
+    \bool_set_false:N \l__autogloss_hasdisplay_bool
+    \keys_set:nn { autogloss / term } {#1}
+    \tl_clear:N \l__autogloss_alias_tl
+    \clist_map_inline:Nn \l__autogloss_alias_clist
+      { \tl_put_right:Nx \l__autogloss_alias_tl
+          { " \lua_escape:e { \detokenize {##1} } " , } }
+    \int_set:Nn \l__autogloss_id_int
+      {
+        \lua_now:e
+          { autogloss.declare( " \lua_escape:e { \detokenize {#2} } " ,
+              { \l__autogloss_alias_tl } ) }
+      }
+    \int_compare:nNnT { \l__autogloss_id_int } > { 0 }
+      {
+        \bool_if:NTF \l__autogloss_hasdisplay_bool
+          { \cs_gset:cpx { autogloss@disp@ \int_use:N \l__autogloss_id_int }
+              { \exp_not:V \l__autogloss_display_tl } }
+          { \cs_if_exist:cF { autogloss@disp@ \int_use:N \l__autogloss_id_int }
+              { \cs_gset:cpn { autogloss@disp@ \int_use:N \l__autogloss_id_int } {#2} } }
+        \tl_if_empty:NF \l__autogloss_desc_tl
+          { \cs_gset:cpx { autogloss@desc@ \int_use:N \l__autogloss_id_int }
+              { \exp_not:V \l__autogloss_desc_tl } }
+      }
+    \group_end:
+  }
+
+\NewDocumentCommand \autoglossterms { m }
+  { \clist_map_inline:nn {#1} { \autoglossterm {##1} } }
+\ExplSyntaxOff
+
+% ---- scanning on/off ------------------------------------------------------
+\newcommand\autoglossstart{\global\autogloss@scanattr=1\relax}
+\newcommand\autoglossstop{\global\autogloss@scanattr=-"7FFFFFFF\relax}
+\autoglossstop
+
+\directlua{
+  luatexbase.add_to_callback("pre_linebreak_filter", autogloss.pre_linebreak, "autogloss.scan")
+  luatexbase.add_to_callback("hpack_filter", autogloss.hpack, "autogloss.scan")
+}
+
+\ExplSyntaxOn
+\bool_if:NT \l__autogloss_autostart_bool
+  {
+    \AddToHook{cmd/mainmatter/before}{\autoglossstart}
+    \AddToHook{cmd/@chapter/before}
+      {
+        \cs_if_exist:NTF \if@mainmatter
+          { \legacy_if:nT { @mainmatter } { \autoglossstart } }
+          { \autoglossstart }
+      }
+    \AddToHook{cmd/backmatter/before}{\autoglossstop}
+  }
+\ExplSyntaxOff
+
+% ---- page bookkeeping -----------------------------------------------------
+\AddToHook{shipout/before}{%
+  \directlua{autogloss.setpage(\the\ReadonlyShipoutCounter,
+    "\luaescapestring{\thepage}")}}
+
+\def\autogloss@entry#1#2#3{\directlua{autogloss.load("#1",#2,"#3")}}
+\def\autogloss@w#1#2#3{%
+  \immediate\write\@auxout{\string\autogloss@entry{#1}{#2}{#3}}}
+
+\AddToHook{begindocument}{%
+  \immediate\write\@auxout{\string\providecommand\string\autogloss@entry[3]{}}}
+
+\AddToHook{enddocument/afterlastpage}{%
+  \if@filesw\directlua{autogloss.writeaux()}\fi
+  \gdef\autogloss@entry#1#2#3{}%
+  \directlua{if autogloss.changed() then
+    tex.sprint("\string\\PackageWarningNoLine{autogloss}{Glossary page numbers changed. Rerun to get them right}")
+  end}}
+
+% ---- typesetting ----------------------------------------------------------
+\newcommand\autoglosspagesep{, }
+\newcommand\autoglossrangesep{--}
+\newcommand\autoglossdescsep{\quad}
+\newcommand\autoglossnotfound{\textbf{??}}
+\newcommand\autoglosstermfont{\bfseries}
+
+\ExplSyntaxOn
+\cs_new:Npn \autogloss@page #1
+  {
+    \bool_if:nTF { \l__autogloss_links_bool && \cs_if_exist_p:N \hyperlink }
+      { \hyperlink{page.#1}{#1} } {#1}
+  }
+\ExplSyntaxOff
+
+\newif\ifautogloss@trial
+\newif\ifautogloss@fixed
+\def\autogloss@none#1{%
+  \autoglossnotfound
+  \ifautogloss@trial\else
+  \PackageWarning{autogloss}{Term `\detokenize\expandafter\expandafter\expandafter{%
+    \csname autogloss@disp@#1\endcsname}' has no recorded pages yet}\fi}
+
+% ---- entry layout ---------------------------------------------------------
+% Single line when it fits:   Term  description ............ pages
+% Otherwise two wrapped blocks side by side; the split between them is chosen
+% so the two blocks take up as close to the same number of lines as possible.
+\newdimen\autogloss@hang \newdimen\autogloss@ind  \newdimen\autogloss@nat  \newdimen\autogloss@pnat
+\newdimen\autogloss@Wmax  \newdimen\autogloss@Wmin \newdimen\autogloss@Wp
+\newdimen\autogloss@bestW
+\newcount\autogloss@nl \newcount\autogloss@np \newcount\autogloss@k
+\newcount\autogloss@score \newcount\autogloss@best
+\newbox\autogloss@lbox \newbox\autogloss@pbox
+\def\autogloss@steps{16}
+\newcommand\autoglossgap{0.5em}
+\newcommand\autoglossdescindent{1.5em}
+\newcommand\autoglossmindescwidth{0.35\linewidth}
+
+\def\autogloss@term#1{{\autoglosstermfont\csname autogloss@disp@#1\endcsname}}
+\def\autogloss@left#1{%
+  \ifcsname autogloss@desc@#1\endcsname
+    \csname autogloss@desc@#1\endcsname
+  \else
+    \autogloss@term{#1}%
+  \fi}
+\def\autogloss@dots{%
+  \nobreak\leaders\hbox to 0.6em{\hss.\hss}\hskip 1.5em plus 1fill\relax}
+
+% #1 = term id, #2 = width
+\def\autogloss@mkleft#1#2{%
+  \setbox\autogloss@lbox\vbox{\hsize=#2\relax
+    \parindent=0pt \parfillskip=0pt \rightskip=0pt plus 2.5em\relax
+    \hangindent=\autogloss@hang \hangafter=1
+    \noindent\autogloss@left{#1}\autogloss@dots\null\par
+    \global\autogloss@nl=\prevgraf}}
+% #1 = page list, #2 = width
+\def\autogloss@mkpages{\autogloss@mkpadded{0}}
+\def\autogloss@mkpadded#1#2#3{%
+  \setbox\autogloss@pbox\vbox{\hsize=#3\relax
+    \autogloss@k=#1\relax
+    \loop\ifnum\autogloss@k>0 \hbox{}\advance\autogloss@k by -1 \repeat
+    \parindent=0pt \rightskip=0pt plus 2.5em \parfillskip=0pt plus 1fil\relax
+    \noindent#2\par
+    \global\autogloss@np=\prevgraf}}
+
+\newcommand\autogloss@item[2]{\par\begingroup\autogloss@@item{#1}{#2}\par\endgroup}
+\newcommand\autogloss@@item[2]{%
+  \par
+  \ifcsname autogloss@desc@#1\endcsname
+    % term on its own line, description indented underneath
+    \noindent\autogloss@term{#1}\par\nobreak
+    \parskip=0pt\relax
+    \autogloss@hang=0pt \autogloss@ind=\autoglossdescindent\relax
+  \else
+    \autogloss@hang=2em \autogloss@ind=0pt
+  \fi
+  \settowidth\autogloss@nat{\autogloss@trialtrue\autogloss@left{#1}}%
+  \advance\autogloss@nat by \autogloss@ind
+  \settowidth\autogloss@pnat{\autogloss@trialtrue#2}%
+  \ifx\autogloss@maxpw\@empty
+    % automatic: page block may be as wide as needed, leaving room for the term
+    \autogloss@fixedfalse
+    \autogloss@Wmin=\dimexpr\autogloss@nat-\autogloss@ind+2em\relax
+    \ifdim\autogloss@Wmin>\autoglossmindescwidth \autogloss@Wmin=\autoglossmindescwidth \fi
+    \autogloss@Wmax=\dimexpr\linewidth-\autogloss@ind-\autogloss@Wmin-\autoglossgap\relax
+  \else
+    \autogloss@fixedtrue
+    \autogloss@Wmax=\dimexpr\autogloss@maxpw\relax
+  \fi
+  \ifdim\dimexpr\autogloss@nat+2em+\autogloss@pnat\relax>\linewidth
+    \autogloss@multi{#1}{#2}%
+  \else\ifdim\autogloss@pnat>\autogloss@Wmax
+    \autogloss@multi{#1}{#2}%
+  \else
+    \noindent\hskip\autogloss@ind\autogloss@left{#1}\autogloss@dots\hbox{#2}\par
+  \fi\fi}
+
+\def\autogloss@multi#1#2{%
+  \ifdim\autogloss@pnat<\autogloss@Wmax \autogloss@Wmax=\autogloss@pnat \fi
+  \autogloss@Wmin=0.15\linewidth
+  \ifdim\autogloss@Wmin>\autogloss@Wmax \autogloss@Wmin=\autogloss@Wmax \fi
+  \autogloss@best=\maxdimen \autogloss@bestW=\autogloss@Wmax
+  \autogloss@k=0
+  \ifautogloss@fixed
+    % fixed width: no search, page block is exactly maxpagewidth (or narrower
+    % if the whole list fits)
+    \global\autogloss@bestW=\autogloss@Wmax
+  \else
+  \begingroup\autogloss@trialtrue
+  \loop
+    \autogloss@Wp=\dimexpr\autogloss@Wmin+(\autogloss@Wmax-\autogloss@Wmin)
+                  *\autogloss@k/\autogloss@steps\relax
+    \autogloss@mkleft{#1}{\dimexpr\linewidth-\autogloss@ind-\autogloss@Wp-\autoglossgap\relax}%
+    \autogloss@mkpages{#2}{\autogloss@Wp}%
+    % score = height of the entry in lines. Candidates run from widest
+    % description to widest page block, and only a strictly better score
+    % replaces the best, so ties keep the widest description.
+    \ifnum\autogloss@nl>\autogloss@np
+      \autogloss@score=\autogloss@nl
+    \else
+      \autogloss@score=\autogloss@np
+    \fi
+    \ifnum\autogloss@score<\autogloss@best
+      \global\autogloss@best=\autogloss@score
+      \global\autogloss@bestW=\autogloss@Wp
+    \fi
+    \advance\autogloss@k by 1
+  \ifnum\autogloss@k>\autogloss@steps\else\repeat
+  \endgroup
+  \fi
+  \autogloss@mkleft{#1}{\dimexpr\linewidth-\autogloss@ind-\autogloss@bestW-\autoglossgap\relax}%
+  \autogloss@mkpages{#2}{\autogloss@bestW}%
+  % If the description is taller, push the page list down so the dots on
+  % the description's last line lead into the last line of page numbers.
+  \ifnum\autogloss@nl>\autogloss@np
+    \autogloss@mkpadded{\numexpr\autogloss@nl-\autogloss@np\relax}{#2}{\autogloss@bestW}%
+  \fi
+  \noindent\hbox to\linewidth{\hskip\autogloss@ind
+    \vtop{\unvbox\autogloss@lbox}\hfil\vtop{\unvbox\autogloss@pbox}}\par
+  \prevdepth=\dp\strutbox}
+
+\ExplSyntaxOn
+\NewDocumentCommand \printautoglossary { }
+  {
+    \autoglossstop
+    \cs_if_exist:NTF \chapter
+      { \chapter* { \l__autogloss_title_tl }
+        \bool_if:NT \l__autogloss_toc_bool
+          { \addcontentsline{toc}{chapter}{\l__autogloss_title_tl} } }
+      { \section* { \l__autogloss_title_tl }
+        \bool_if:NT \l__autogloss_toc_bool
+          { \addcontentsline{toc}{section}{\l__autogloss_title_tl} } }
+    \markboth { \l__autogloss_title_tl } { \l__autogloss_title_tl }
+    \group_begin:
+    \parindent=0pt \parskip=0.4\baselineskip \parfillskip=0pt \relax
+    \rightskip=0pt plus 2em \relax
+    \directlua{autogloss.typeset()}
+    \par
+    \group_end:
+  }
+\ExplSyntaxOff
+
+\endinput
